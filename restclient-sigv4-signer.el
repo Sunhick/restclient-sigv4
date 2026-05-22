@@ -328,15 +328,20 @@ TIMESTAMP: UTC time as (HIGH LOW USEC PSEC) or nil for current time."
          (host (plist-get url-parts :host))
          (path (plist-get url-parts :path))
          (query-params (plist-get url-parts :query-params))
-         ;; URI-encode the path (each segment individually)
+         ;; URI-encode the path (each segment individually, preserve trailing slash)
          (canonical-path
-          (let ((segments (split-string path "/" t)))
+          (let* ((has-trailing-slash (and (> (length path) 1)
+                                         (string-suffix-p "/" path)))
+                 (segments (split-string path "/" t)))
             (if segments
-                (concat "/"
-                        (mapconcat (lambda (seg)
-                                     (restclient-sigv4-uri-encode seg t))
-                                   segments
-                                   "/"))
+                (let ((encoded (concat "/"
+                                       (mapconcat (lambda (seg)
+                                                    (restclient-sigv4-uri-encode seg t))
+                                                  segments
+                                                  "/"))))
+                  (if has-trailing-slash
+                      (concat encoded "/")
+                    encoded))
               "/")))
          ;; Build headers for signing: add required AWS headers
          (signing-headers headers)
