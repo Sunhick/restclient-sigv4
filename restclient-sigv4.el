@@ -92,7 +92,7 @@ Signals error for invalid parameter keys or empty values."
 ;; dynamic, making it visible to hook functions.
 ;; The lack of a package prefix is intentional — this references
 ;; restclient.el's own parameter name.
-(with-no-warnings (defvar url))
+(defvar url) ;; noqa: prefix
 
 (defun restclient-sigv4-hook ()
   "Sign the current request if X-Sigv4 header is present.
