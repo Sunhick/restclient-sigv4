@@ -90,7 +90,9 @@ Signals error for invalid parameter keys or empty values."
 ;; lexical-binding), `url' is a function parameter of `restclient-http-do'.
 ;; By declaring it special here, Emacs treats all bindings of `url' as
 ;; dynamic, making it visible to hook functions.
-(defvar url)
+;; The lack of a package prefix is intentional — this references
+;; restclient.el's own parameter name.
+(with-no-warnings (defvar url))
 
 (defun restclient-sigv4-hook ()
   "Sign the current request if X-Sigv4 header is present.
