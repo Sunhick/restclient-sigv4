@@ -41,5 +41,47 @@
 (require 'restclient-sigv4-signer)
 (require 'restclient-sigv4-credentials)
 
+;;; Customization
+
+(defgroup restclient-sigv4 nil
+  "AWS SigV4 signing for restclient.el."
+  :group 'restclient
+  :prefix "restclient-sigv4-")
+
+(defcustom restclient-sigv4-default-region nil
+  "Default AWS region.  Used when :sigv4 directive omits region."
+  :type '(choice (const :tag "None" nil) string)
+  :group 'restclient-sigv4
+  :safe #'stringp)
+
+(defcustom restclient-sigv4-credentials-file "~/.aws/credentials"
+  "Path to AWS credentials file."
+  :type 'string
+  :group 'restclient-sigv4
+  :safe #'stringp)
+
+;;; Directive parsing
+
+(defconst restclient-sigv4--allowed-params '("region" "service" "profile")
+  "Allowed parameter keys for the :sigv4 directive.")
+
+(defun restclient-sigv4-parse-directive (value)
+  "Parse VALUE string into plist (:region R :service S :profile P).
+VALUE is a space-separated list of key=value pairs.
+Signals error for invalid parameter keys or empty values."
+  (let ((parts (split-string value nil t))
+        result)
+    (dolist (part parts)
+      (unless (string-match "\\`\\([^=]+\\)=\\(.*\\)\\'" part)
+        (error "restclient-sigv4: directive: malformed parameter '%s'" part))
+      (let ((key (match-string 1 part))
+            (val (match-string 2 part)))
+        (unless (member key restclient-sigv4--allowed-params)
+          (error "restclient-sigv4: directive: invalid parameter '%s' (allowed: region, service, profile)" key))
+        (when (string-empty-p val)
+          (error "restclient-sigv4: directive: empty value for parameter '%s'" key))
+        (setq result (plist-put result (intern (concat ":" key)) val))))
+    result))
+
 (provide 'restclient-sigv4)
 ;;; restclient-sigv4.el ends here

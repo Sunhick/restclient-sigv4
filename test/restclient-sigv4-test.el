@@ -18,6 +18,7 @@
 
 (require 'restclient-sigv4-credentials)
 (require 'restclient-sigv4-signer)
+(require 'restclient-sigv4)
 
 ;;; INI file parser tests
 
