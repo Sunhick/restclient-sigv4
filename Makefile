@@ -1,4 +1,4 @@
-.PHONY: all test pbt clean byte-compile lint deps
+.PHONY: all test pbt clean byte-compile lint deps distclean
 
 EMACS ?= emacs
 BATCH := $(EMACS) -Q --batch
@@ -9,7 +9,10 @@ PBT := test/restclient-sigv4-pbt.el
 DEPS_DIR := .deps
 PROPCHECK_DIR := $(DEPS_DIR)/propcheck
 
-all: byte-compile test
+PACKAGE_INIT := --eval '(setq package-user-dir (expand-file-name "$(DEPS_DIR)"))' \
+	--eval '(package-initialize)'
+
+all: deps byte-compile test
 
 deps: $(DEPS_DIR)/.installed
 
@@ -20,23 +23,22 @@ $(DEPS_DIR)/.installed:
 	  (setq package-archives (quote (("melpa" . "https://melpa.org/packages/") ("gnu" . "https://elpa.gnu.org/packages/")))) \
 	  (package-initialize) \
 	  (package-refresh-contents) \
+	  (package-install (quote restclient)) \
 	  (package-install (quote dash)))'
 	git clone --depth 1 https://github.com/Wilfred/propcheck.git $(PROPCHECK_DIR) 2>/dev/null || true
 	touch $(DEPS_DIR)/.installed
 
-byte-compile: $(SRC)
-	$(BATCH) -L . -f batch-byte-compile $(SRC)
+byte-compile: $(SRC) $(DEPS_DIR)/.installed
+	$(BATCH) $(PACKAGE_INIT) -L . -f batch-byte-compile $(SRC)
 
-test: $(SRC) $(TEST)
-	$(BATCH) -L . -l ert -l $(TEST) -f ert-run-tests-batch-and-exit
+test: $(SRC) $(TEST) $(DEPS_DIR)/.installed
+	$(BATCH) $(PACKAGE_INIT) -L . -l ert -l $(TEST) -f ert-run-tests-batch-and-exit
 
 pbt: $(SRC) $(PBT) $(DEPS_DIR)/.installed
-	$(BATCH) --eval '(setq package-user-dir (expand-file-name "$(DEPS_DIR)"))' \
-	  --eval '(package-initialize)' \
-	  -L . -L $(PROPCHECK_DIR) -l ert -l $(PBT) -f ert-run-tests-batch-and-exit
+	$(BATCH) $(PACKAGE_INIT) -L . -L $(PROPCHECK_DIR) -l ert -l $(PBT) -f ert-run-tests-batch-and-exit
 
-lint: $(SRC)
-	$(BATCH) -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile $(SRC)
+lint: $(SRC) $(DEPS_DIR)/.installed
+	$(BATCH) $(PACKAGE_INIT) -L . --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile $(SRC)
 
 clean:
 	rm -f *.elc test/*.elc
