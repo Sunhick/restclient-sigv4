@@ -25,10 +25,11 @@
 ;;; Commentary:
 
 ;; This package adds AWS Signature Version 4 (SigV4) request signing
-;; to restclient.el via advice on `restclient-http-do'.
+;; to restclient.el as a minor mode.
 ;;
-;; To use, add an X-Sigv4 header to your restclient request with
-;; region and service parameters:
+;; To use, enable `restclient-sigv4-mode' (activated automatically in
+;; restclient-mode buffers when loaded) and add an X-Sigv4 header to
+;; your restclient request:
 ;;
 ;;   X-Sigv4: region=us-east-1 service=execute-api
 ;;
@@ -138,24 +139,65 @@ the request URL, then calls the original function."
   (let ((restclient-sigv4--current-url url))
     (apply orig-fn method url headers entity handle-args)))
 
-;;; Enable/Disable
+;;; Minor Mode
 
-(defun restclient-sigv4-enable ()
-  "Enable SigV4 signing for restclient.el requests.
-Adds the signing hook and URL-capturing advice."
-  (interactive)
+(defvar restclient-sigv4-mode-map
+  (let ((map (make-sparse-keymap)))
+    ;; Add sigv4-specific keybindings here
+    map)
+  "Keymap for `restclient-sigv4-mode'.")
+
+;;;###autoload
+(define-minor-mode restclient-sigv4-mode
+  "Minor mode for AWS SigV4 request signing in restclient buffers.
+
+When enabled, requests with an X-Sigv4 header are automatically
+signed with AWS Signature Version 4 before dispatch.
+
+\\{restclient-sigv4-mode-map}"
+  :lighter " SigV4"
+  :keymap restclient-sigv4-mode-map
+  :group 'restclient-sigv4
+  (if restclient-sigv4-mode
+      (restclient-sigv4--activate)
+    (restclient-sigv4--deactivate)))
+
+(defun restclient-sigv4--activate ()
+  "Activate SigV4 signing hooks and advice."
   (advice-add 'restclient-http-do :around #'restclient-sigv4--advice)
   (add-hook 'restclient-http-do-hook #'restclient-sigv4-hook))
 
-(defun restclient-sigv4-disable ()
-  "Disable SigV4 signing for restclient.el requests.
-Removes the signing hook and URL-capturing advice."
-  (interactive)
+(defun restclient-sigv4--deactivate ()
+  "Deactivate SigV4 signing hooks and advice."
   (remove-hook 'restclient-http-do-hook #'restclient-sigv4-hook)
   (advice-remove 'restclient-http-do #'restclient-sigv4--advice))
 
-;; Auto-enable on load
-(restclient-sigv4-enable)
+;;; Legacy enable/disable (kept for backward compatibility)
+
+(defun restclient-sigv4-enable ()
+  "Enable SigV4 signing globally.
+Equivalent to turning on `restclient-sigv4-mode'."
+  (interactive)
+  (restclient-sigv4--activate))
+
+(defun restclient-sigv4-disable ()
+  "Disable SigV4 signing globally.
+Equivalent to turning off `restclient-sigv4-mode'."
+  (interactive)
+  (restclient-sigv4--deactivate))
+
+;;; Auto-activate in restclient-mode buffers
+
+(defun restclient-sigv4--maybe-enable ()
+  "Enable `restclient-sigv4-mode' in restclient-mode buffers."
+  (when (derived-mode-p 'restclient-mode)
+    (restclient-sigv4-mode 1)))
+
+(add-hook 'restclient-mode-hook #'restclient-sigv4--maybe-enable)
+
+;; Also activate globally on load so it works immediately
+;; (the hook/advice are global, not buffer-local)
+(restclient-sigv4--activate)
 
 (provide 'restclient-sigv4)
 ;;; restclient-sigv4.el ends here
