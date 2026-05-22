@@ -54,5 +54,32 @@ Signal error if FILE does not exist or is malformed."
       (push (cons current-section (nreverse current-pairs)) sections))
     (nreverse sections)))
 
+(defun restclient-sigv4-read-credentials-file (file profile)
+  "Read credentials for PROFILE from FILE.
+Returns plist (:access-key-id :secret-access-key :session-token) on success.
+Signals error if FILE does not exist, PROFILE is not found, or required
+fields are missing."
+  (let* ((sections (restclient-sigv4-parse-ini-file file))
+         (section (assoc profile sections)))
+    (unless section
+      (let ((available (mapcar #'car sections)))
+        (error "restclient-sigv4: credentials: profile '%s' not found in %s (available: %s)"
+               profile file (string-join available ", "))))
+    (let* ((pairs (cdr section))
+           (access-key (cdr (assoc "aws_access_key_id" pairs)))
+           (secret-key (cdr (assoc "aws_secret_access_key" pairs)))
+           (session-token (cdr (assoc "aws_session_token" pairs))))
+      (when (or (null access-key) (string-empty-p access-key))
+        (error "restclient-sigv4: credentials: profile '%s' missing required field '%s'"
+               profile "aws_access_key_id"))
+      (when (or (null secret-key) (string-empty-p secret-key))
+        (error "restclient-sigv4: credentials: profile '%s' missing required field '%s'"
+               profile "aws_secret_access_key"))
+      (list :access-key-id access-key
+            :secret-access-key secret-key
+            :session-token (if (and session-token (not (string-empty-p session-token)))
+                               session-token
+                             nil)))))
+
 (provide 'restclient-sigv4-credentials)
 ;;; restclient-sigv4-credentials.el ends here

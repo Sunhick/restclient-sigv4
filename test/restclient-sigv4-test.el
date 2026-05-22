@@ -93,5 +93,112 @@
             (should (equal (cdr (assoc "key" (cdar result))) "value"))))
       (delete-file tmp))))
 
+;;; Credentials file reader tests
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-basic ()
+  "Test reading credentials for a profile returns correct plist."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[default]\n")
+            (insert "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n")
+            (insert "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"))
+          (let ((result (restclient-sigv4-read-credentials-file tmp "default")))
+            (should (equal (plist-get result :access-key-id) "AKIAIOSFODNN7EXAMPLE"))
+            (should (equal (plist-get result :secret-access-key) "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"))
+            (should (null (plist-get result :session-token)))))
+      (delete-file tmp))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-with-session-token ()
+  "Test reading credentials with session token."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[production]\n")
+            (insert "aws_access_key_id = AKIAI44QH8DHBEXAMPLE\n")
+            (insert "aws_secret_access_key = je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY\n")
+            (insert "aws_session_token = AQoDYXdzEJr...\n"))
+          (let ((result (restclient-sigv4-read-credentials-file tmp "production")))
+            (should (equal (plist-get result :access-key-id) "AKIAI44QH8DHBEXAMPLE"))
+            (should (equal (plist-get result :secret-access-key) "je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY"))
+            (should (equal (plist-get result :session-token) "AQoDYXdzEJr..."))))
+      (delete-file tmp))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-not-found ()
+  "Test that a missing file signals an error with path."
+  (let ((err (should-error
+              (restclient-sigv4-read-credentials-file "/nonexistent/path/credentials" "default")
+              :type 'error)))
+    (should (string-match-p "file not found" (cadr err)))
+    (should (string-match-p "/nonexistent/path/credentials" (cadr err)))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-profile-missing ()
+  "Test that a missing profile signals error listing available profiles."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[default]\n")
+            (insert "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n")
+            (insert "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n")
+            (insert "[production]\n")
+            (insert "aws_access_key_id = AKIAI44QH8DHBEXAMPLE\n")
+            (insert "aws_secret_access_key = je7MtGbClwBF/2Zp9Utk/h3yCo8nvbEXAMPLEKEY\n"))
+          (let ((err (should-error
+                      (restclient-sigv4-read-credentials-file tmp "staging")
+                      :type 'error)))
+            (should (string-match-p "profile .staging. not found" (cadr err)))
+            (should (string-match-p "default" (cadr err)))
+            (should (string-match-p "production" (cadr err)))))
+      (delete-file tmp))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-missing-access-key ()
+  "Test that missing access key signals error naming the field."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[default]\n")
+            (insert "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"))
+          (let ((err (should-error
+                      (restclient-sigv4-read-credentials-file tmp "default")
+                      :type 'error)))
+            (should (string-match-p "missing required field" (cadr err)))
+            (should (string-match-p "aws_access_key_id" (cadr err)))))
+      (delete-file tmp))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-missing-secret-key ()
+  "Test that missing secret key signals error naming the field."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[default]\n")
+            (insert "aws_access_key_id = AKIAIOSFODNN7EXAMPLE\n"))
+          (let ((err (should-error
+                      (restclient-sigv4-read-credentials-file tmp "default")
+                      :type 'error)))
+            (should (string-match-p "missing required field" (cadr err)))
+            (should (string-match-p "aws_secret_access_key" (cadr err)))))
+      (delete-file tmp))))
+
+(ert-deftest restclient-sigv4-test-read-credentials-file-empty-access-key ()
+  "Test that empty access key is treated as missing."
+  (let ((tmp (make-temp-file "creds-test" nil ".ini")))
+    (unwind-protect
+        (progn
+          (with-temp-file tmp
+            (insert "[default]\n")
+            (insert "aws_access_key_id =\n")
+            (insert "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"))
+          (let ((err (should-error
+                      (restclient-sigv4-read-credentials-file tmp "default")
+                      :type 'error)))
+            (should (string-match-p "missing required field" (cadr err)))
+            (should (string-match-p "aws_access_key_id" (cadr err)))))
+      (delete-file tmp))))
+
 (provide 'restclient-sigv4-test)
 ;;; restclient-sigv4-test.el ends here
