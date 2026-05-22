@@ -39,8 +39,10 @@
 ;;; Code:
 
 (require 'restclient)
-(require 'restclient-sigv4-signer)
-(require 'restclient-sigv4-credentials)
+
+;; Defer loading signer and credentials until actually needed
+(autoload 'restclient-sigv4-sign-request "restclient-sigv4-signer")
+(autoload 'restclient-sigv4-resolve-credentials "restclient-sigv4-credentials")
 
 ;;; Customization
 
