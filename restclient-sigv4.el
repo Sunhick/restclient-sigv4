@@ -25,7 +25,7 @@
 ;;; Commentary:
 
 ;; This package adds AWS Signature Version 4 (SigV4) request signing
-;; to restclient.el via the `restclient-http-do-hook' mechanism.
+;; to restclient.el via advice on `restclient-http-do'.
 ;;
 ;; To use, add an X-Sigv4 header to your restclient request with
 ;; region and service parameters:
@@ -83,16 +83,14 @@ Signals error for invalid parameter keys or empty values."
         (setq result (plist-put result (intern (concat ":" key)) val))))
     result))
 
-;;; Hook function
+;;; Internal: current request URL for hook access
 
-;; Declare `url' as a special variable so it is dynamically accessible
-;; from `restclient-http-do-hook'.  In restclient.el (which uses
-;; lexical-binding), `url' is a function parameter of `restclient-http-do'.
-;; By declaring it special here, Emacs treats all bindings of `url' as
-;; dynamic, making it visible to hook functions.
-;; The lack of a package prefix is intentional — this references
-;; restclient.el's own parameter name.
-(defvar url) ;; noqa: prefix
+(defvar restclient-sigv4--current-url nil
+  "URL of the current request being processed.
+Set by the advice around `restclient-http-do' so the hook function
+can access the request URL.")
+
+;;; Hook function
 
 (defun restclient-sigv4-hook ()
   "Sign the current request if X-Sigv4 header is present.
@@ -123,7 +121,7 @@ with the signed headers.  When absent, it does nothing."
           (setq url-request-extra-headers
                 (restclient-sigv4-sign-request
                  url-request-method
-                 url
+                 restclient-sigv4--current-url
                  url-request-extra-headers
                  url-request-data
                  credential
@@ -131,19 +129,30 @@ with the signed headers.  When absent, it does nothing."
                  service
                  nil)))))))
 
+;;; Advice to capture URL before hook runs
+
+(defun restclient-sigv4--advice (orig-fn method url headers entity &rest handle-args)
+  "Advice around `restclient-http-do' to capture URL for SigV4 signing.
+Sets `restclient-sigv4--current-url' so the hook function can access
+the request URL, then calls the original function."
+  (let ((restclient-sigv4--current-url url))
+    (apply orig-fn method url headers entity handle-args)))
+
 ;;; Enable/Disable
 
 (defun restclient-sigv4-enable ()
   "Enable SigV4 signing for restclient.el requests.
-Adds `restclient-sigv4-hook' to `restclient-http-do-hook'."
+Adds the signing hook and URL-capturing advice."
   (interactive)
+  (advice-add 'restclient-http-do :around #'restclient-sigv4--advice)
   (add-hook 'restclient-http-do-hook #'restclient-sigv4-hook))
 
 (defun restclient-sigv4-disable ()
   "Disable SigV4 signing for restclient.el requests.
-Removes `restclient-sigv4-hook' from `restclient-http-do-hook'."
+Removes the signing hook and URL-capturing advice."
   (interactive)
-  (remove-hook 'restclient-http-do-hook #'restclient-sigv4-hook))
+  (remove-hook 'restclient-http-do-hook #'restclient-sigv4-hook)
+  (advice-remove 'restclient-http-do #'restclient-sigv4--advice))
 
 ;; Auto-enable on load
 (restclient-sigv4-enable)
