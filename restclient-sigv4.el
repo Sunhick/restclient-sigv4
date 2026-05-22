@@ -83,5 +83,68 @@ Signals error for invalid parameter keys or empty values."
         (setq result (plist-put result (intern (concat ":" key)) val))))
     result))
 
+;;; Hook function
+
+;; Declare `url' as a special variable so it is dynamically accessible
+;; from `restclient-http-do-hook'.  In restclient.el (which uses
+;; lexical-binding), `url' is a function parameter of `restclient-http-do'.
+;; By declaring it special here, Emacs treats all bindings of `url' as
+;; dynamic, making it visible to hook functions.
+(defvar url)
+
+(defun restclient-sigv4-hook ()
+  "Sign the current request if X-Sigv4 header is present.
+This function is intended to be added to `restclient-http-do-hook'.
+It inspects `url-request-extra-headers' for an \"X-Sigv4\" entry.
+When present, it removes the header, parses the directive, resolves
+credentials, signs the request, and updates `url-request-extra-headers'
+with the signed headers.  When absent, it does nothing."
+  (let ((sigv4-entry (assoc "X-Sigv4" url-request-extra-headers)))
+    (when sigv4-entry
+      ;; Remove X-Sigv4 header from the headers alist
+      (setq url-request-extra-headers
+            (assoc-delete-all "X-Sigv4" url-request-extra-headers))
+      ;; Parse directive parameters
+      (let* ((directive (restclient-sigv4-parse-directive (cdr sigv4-entry)))
+             (region (or (plist-get directive :region)
+                         restclient-sigv4-default-region))
+             (service (plist-get directive :service))
+             (profile (plist-get directive :profile)))
+        ;; Validate required parameters
+        (unless region
+          (error "restclient-sigv4: directive: missing required parameter 'region'"))
+        (unless service
+          (error "restclient-sigv4: directive: missing required parameter 'service'"))
+        ;; Resolve credentials
+        (let ((credential (restclient-sigv4-resolve-credentials profile)))
+          ;; Sign the request and update headers
+          (setq url-request-extra-headers
+                (restclient-sigv4-sign-request
+                 url-request-method
+                 url
+                 url-request-extra-headers
+                 url-request-data
+                 credential
+                 region
+                 service
+                 nil)))))))
+
+;;; Enable/Disable
+
+(defun restclient-sigv4-enable ()
+  "Enable SigV4 signing for restclient.el requests.
+Adds `restclient-sigv4-hook' to `restclient-http-do-hook'."
+  (interactive)
+  (add-hook 'restclient-http-do-hook #'restclient-sigv4-hook))
+
+(defun restclient-sigv4-disable ()
+  "Disable SigV4 signing for restclient.el requests.
+Removes `restclient-sigv4-hook' from `restclient-http-do-hook'."
+  (interactive)
+  (remove-hook 'restclient-http-do-hook #'restclient-sigv4-hook))
+
+;; Auto-enable on load
+(restclient-sigv4-enable)
+
 (provide 'restclient-sigv4)
 ;;; restclient-sigv4.el ends here
