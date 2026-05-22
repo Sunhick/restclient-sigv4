@@ -11,14 +11,15 @@ Sign requests to AWS services directly from your restclient buffers — no manua
 
 ## Installation
 
-Clone the repository and add it to your load path:
+Add to your Emacs config:
 
 ```elisp
 (add-to-list 'load-path "/path/to/restclient-sigv4")
-(require 'restclient-sigv4)
+(autoload 'restclient-sigv4-mode "restclient-sigv4" nil t)
+(add-hook 'restclient-mode-hook #'restclient-sigv4-mode)
 ```
 
-The package auto-enables on load by adding its hook to `restclient-http-do-hook`.
+The package lazy-loads — the signer and credential modules are only loaded on the first request that actually uses `X-Sigv4`.
 
 ## Usage
 
@@ -52,6 +53,16 @@ The `X-Sigv4` header is consumed during signing and replaced with the proper AWS
 | `profile` | No       | AWS credentials profile name |
 
 *Region can be omitted if `restclient-sigv4-default-region` is set.
+
+## Minor Mode
+
+`restclient-sigv4-mode` is a minor mode that activates automatically in `restclient-mode` buffers. When active, you'll see ` SigV4` in the mode line.
+
+| Command | Description |
+|---------|-------------|
+| `M-x restclient-sigv4-mode` | Toggle SigV4 signing on/off |
+
+The mode auto-enables via `restclient-mode-hook`. Requests without an `X-Sigv4` header pass through unchanged regardless of whether the mode is active.
 
 ## Credentials
 
@@ -101,21 +112,15 @@ All customizable variables are under the `restclient-sigv4` customization group 
 | `restclient-sigv4-default-region` | `nil` | Default AWS region when directive omits it |
 | `restclient-sigv4-credentials-file` | `"~/.aws/credentials"` | Path to AWS credentials file |
 
-## Commands
-
-| Command | Description |
-|---------|-------------|
-| `restclient-sigv4-enable` | Add signing hook to restclient (done automatically on load) |
-| `restclient-sigv4-disable` | Remove signing hook from restclient |
-
 ## File Structure
 
 ```
 restclient-sigv4/
-├── restclient-sigv4.el              ; Integration layer (hook, directive parser)
-├── restclient-sigv4-signer.el       ; SigV4 signing algorithm
-├── restclient-sigv4-credentials.el  ; Credential resolution
+├── restclient-sigv4.el              ; Minor mode, hook, directive parser
+├── restclient-sigv4-signer.el       ; SigV4 signing algorithm (lazy-loaded)
+├── restclient-sigv4-credentials.el  ; Credential resolution (lazy-loaded)
 ├── restclient-sigv4-pkg.el          ; Package metadata
+├── examples.restclient              ; Example requests for various AWS services
 ├── Makefile                         ; Build and test automation
 └── test/
     ├── restclient-sigv4-test.el     ; Unit tests (ERT)
