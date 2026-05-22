@@ -17,9 +17,11 @@
 
 ;;; Code:
 
-(require 'restclient)
 (require 'restclient-sigv4-signer)
 (require 'restclient-sigv4-credentials)
+
+(declare-function restclient-http-do "restclient")
+(defvar restclient-http-do-hook)
 
 (provide 'restclient-sigv4)
 ;;; restclient-sigv4.el ends here

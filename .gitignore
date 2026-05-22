@@ -4,6 +4,9 @@
 # Packaging
 .cask
 
+# Dependencies
+.deps/
+
 # Backup files
 *~
 \#*\#
