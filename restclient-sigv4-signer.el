@@ -13,6 +13,8 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'hex-util)
+(require 'url-parse)
 
 (defun restclient-sigv4-sha256 (data)
   "Compute SHA-256 hash of DATA.
@@ -246,6 +248,157 @@ Signals error if STR is malformed."
           :headers headers-str
           :signed-headers signed-headers
           :body-hash body-hash)))
+
+;;; Signing Key Derivation
+
+(defun restclient-sigv4-derive-signing-key (secret-key date region service)
+  "Derive SigV4 signing key by successively applying HMAC-SHA256.
+SECRET-KEY is the AWS secret access key string.
+DATE is the date string in YYYYMMDD format.
+REGION is the AWS region string.
+SERVICE is the AWS service string.
+Returns binary string suitable for use as HMAC key."
+  (let* ((k-date (restclient-sigv4-hmac-sha256
+                  (concat "AWS4" secret-key) date))
+         (k-region (restclient-sigv4-hmac-sha256 k-date region))
+         (k-service (restclient-sigv4-hmac-sha256 k-region service))
+         (k-signing (restclient-sigv4-hmac-sha256 k-service "aws4_request")))
+    k-signing))
+
+;;; Request Signing
+
+(defun restclient-sigv4--parse-url (url)
+  "Parse URL into components.
+Returns a plist (:host :path :query-params).
+QUERY-PARAMS is a list of (name . value) pairs."
+  (condition-case _err
+      (let* ((parsed (url-generic-parse-url url))
+             (host (url-host parsed))
+             (path (or (url-filename parsed) "/"))
+             ;; url-filename includes query string, split it
+             (path-and-query (split-string path "?" t))
+             (clean-path (or (car path-and-query) "/"))
+             (query-string (cadr path-and-query))
+             (query-params
+              (when query-string
+                (mapcar (lambda (pair)
+                          (let ((kv (split-string pair "=" t)))
+                            (cons (or (car kv) "")
+                                  (or (cadr kv) ""))))
+                        (split-string query-string "&" t)))))
+        ;; Ensure path starts with /
+        (when (or (string= clean-path "") (not (string-prefix-p "/" clean-path)))
+          (setq clean-path (concat "/" clean-path)))
+        (list :host host
+              :path clean-path
+              :query-params query-params))
+    (error
+     (error "restclient-sigv4: signer: malformed URI: %s" url))))
+
+(defun restclient-sigv4--format-timestamp (time)
+  "Format TIME as SigV4 timestamp string YYYYMMDDTHHMMSSZ.
+TIME is a time value as returned by `current-time', or nil for now."
+  (format-time-string "%Y%m%dT%H%M%SZ" (or time (current-time)) t))
+
+(defun restclient-sigv4--format-datestamp (time)
+  "Format TIME as SigV4 datestamp string YYYYMMDD.
+TIME is a time value as returned by `current-time', or nil for now."
+  (format-time-string "%Y%m%d" (or time (current-time)) t))
+
+(defun restclient-sigv4-sign-request (method url headers body credential region service timestamp)
+  "Sign a request and return updated headers alist with auth headers added.
+METHOD: HTTP method string.
+URL: full request URL.
+HEADERS: alist of (name . value) pairs.
+BODY: request body string or nil.
+CREDENTIAL: plist (:access-key-id K :secret-access-key S :session-token T).
+REGION: AWS region string.
+SERVICE: AWS service string.
+TIMESTAMP: UTC time as (HIGH LOW USEC PSEC) or nil for current time."
+  (let* ((access-key-id (plist-get credential :access-key-id))
+         (secret-access-key (plist-get credential :secret-access-key))
+         (session-token (plist-get credential :session-token))
+         ;; Compute timestamps
+         (amz-date (restclient-sigv4--format-timestamp timestamp))
+         (datestamp (restclient-sigv4--format-datestamp timestamp))
+         ;; Compute body hash
+         (body-hash (restclient-sigv4-sha256 (or body "")))
+         ;; Parse URL
+         (url-parts (restclient-sigv4--parse-url url))
+         (host (plist-get url-parts :host))
+         (path (plist-get url-parts :path))
+         (query-params (plist-get url-parts :query-params))
+         ;; URI-encode the path (each segment individually)
+         (canonical-path
+          (let ((segments (split-string path "/" t)))
+            (if segments
+                (concat "/"
+                        (mapconcat (lambda (seg)
+                                     (restclient-sigv4-uri-encode seg t))
+                                   segments
+                                   "/"))
+              "/")))
+         ;; Build headers for signing: add required AWS headers
+         (signing-headers headers)
+         ;; Add x-amz-date
+         (_ (setq signing-headers
+                  (cons (cons "x-amz-date" amz-date)
+                        signing-headers)))
+         ;; Add x-amz-content-sha256
+         (_ (setq signing-headers
+                  (cons (cons "x-amz-content-sha256" body-hash)
+                        signing-headers)))
+         ;; Add host if not already present
+         (_ (unless (cl-find "host" signing-headers
+                             :key #'car
+                             :test (lambda (a b) (string= (downcase a) (downcase b))))
+              (setq signing-headers
+                    (cons (cons "host" host)
+                          signing-headers))))
+         ;; Add x-amz-security-token if session token present
+         (_ (when session-token
+              (setq signing-headers
+                    (cons (cons "x-amz-security-token" session-token)
+                          signing-headers))))
+         ;; Build canonical request
+         (creq (restclient-sigv4-canonical-request
+                method canonical-path query-params signing-headers body-hash))
+         ;; Serialize and hash canonical request
+         (creq-string (restclient-sigv4-serialize-canonical-request creq))
+         (creq-hash (restclient-sigv4-sha256 creq-string))
+         ;; Build credential scope
+         (credential-scope (concat datestamp "/" region "/" service "/aws4_request"))
+         ;; Build string-to-sign
+         (string-to-sign (concat "AWS4-HMAC-SHA256" "\n"
+                                 amz-date "\n"
+                                 credential-scope "\n"
+                                 creq-hash))
+         ;; Derive signing key
+         (signing-key (restclient-sigv4-derive-signing-key
+                       secret-access-key datestamp region service))
+         ;; Compute signature
+         (signature (encode-hex-string
+                     (restclient-sigv4-hmac-sha256 signing-key string-to-sign)))
+         ;; Get signed headers from canonical request
+         (signed-headers (plist-get creq :signed-headers))
+         ;; Build Authorization header
+         (auth-header (concat "AWS4-HMAC-SHA256 "
+                              "Credential=" access-key-id "/" credential-scope ", "
+                              "SignedHeaders=" signed-headers ", "
+                              "Signature=" signature)))
+    ;; Return updated headers with auth headers added
+    ;; Start with original headers, add AWS headers
+    (let ((result headers))
+      ;; Add x-amz-date
+      (setq result (cons (cons "x-amz-date" amz-date) result))
+      ;; Add x-amz-content-sha256
+      (setq result (cons (cons "x-amz-content-sha256" body-hash) result))
+      ;; Add x-amz-security-token if present
+      (when session-token
+        (setq result (cons (cons "x-amz-security-token" session-token) result)))
+      ;; Add Authorization header
+      (setq result (cons (cons "Authorization" auth-header) result))
+      result)))
 
 (provide 'restclient-sigv4-signer)
 ;;; restclient-sigv4-signer.el ends here
