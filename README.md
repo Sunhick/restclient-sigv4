@@ -9,7 +9,8 @@ Sign requests to AWS services directly from your restclient buffers.
 Work in progress. Currently implemented:
 
 - Package structure and metadata
-- INI file parser for AWS credentials files
+- Credential resolution (INI parser, file reader, env var chain)
+- SigV4 core utilities (SHA-256, HMAC-SHA256, URI encoding)
 
 ## Requirements
 
@@ -72,7 +73,7 @@ Profile selection priority:
 ```
 restclient-sigv4/
 ├── restclient-sigv4.el              ; Integration layer (planned)
-├── restclient-sigv4-signer.el       ; SigV4 signing algorithm (planned)
+├── restclient-sigv4-signer.el       ; SigV4 signing algorithm
 ├── restclient-sigv4-credentials.el  ; Credential resolution
 ├── restclient-sigv4-pkg.el          ; Package metadata
 └── test/
