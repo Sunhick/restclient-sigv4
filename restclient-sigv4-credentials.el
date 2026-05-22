@@ -12,6 +12,16 @@
 
 ;;; Code:
 
+(defgroup restclient-sigv4 nil
+  "AWS SigV4 signing for restclient.el."
+  :group 'restclient
+  :prefix "restclient-sigv4-")
+
+(defcustom restclient-sigv4-credentials-file "~/.aws/credentials"
+  "Path to AWS credentials file."
+  :type 'string
+  :group 'restclient-sigv4)
+
 (defun restclient-sigv4-parse-ini-file (file)
   "Parse INI-format FILE into alist of (section . ((key . value) ...)).
 Signal error if FILE does not exist or is malformed."
@@ -80,6 +90,34 @@ fields are missing."
             :session-token (if (and session-token (not (string-empty-p session-token)))
                                session-token
                              nil)))))
+
+(defun restclient-sigv4-resolve-credentials (&optional profile)
+  "Resolve AWS credentials.
+Returns plist (:access-key-id :secret-access-key :session-token).
+PROFILE: optional profile name override.
+Resolution order: (1) environment variables, (2) credentials file.
+Signals error if no valid credentials found."
+  ;; (1) Try environment variables
+  (let ((access-key (getenv "AWS_ACCESS_KEY_ID"))
+        (secret-key (getenv "AWS_SECRET_ACCESS_KEY"))
+        (session-token (getenv "AWS_SESSION_TOKEN")))
+    (if (and access-key (not (string-empty-p access-key))
+             secret-key (not (string-empty-p secret-key)))
+        (list :access-key-id access-key
+              :secret-access-key secret-key
+              :session-token (if (and session-token (not (string-empty-p session-token)))
+                                 session-token
+                               nil))
+      ;; (2) Try credentials file
+      (let* ((resolved-profile (or profile
+                                   (getenv "AWS_PROFILE")
+                                   "default"))
+             (file restclient-sigv4-credentials-file))
+        (condition-case _err
+            (restclient-sigv4-read-credentials-file file resolved-profile)
+          (error
+           (error "restclient-sigv4: credentials: no valid credentials found (checked: environment variables, file %s [profile: %s])"
+                  file resolved-profile)))))))
 
 (provide 'restclient-sigv4-credentials)
 ;;; restclient-sigv4-credentials.el ends here
