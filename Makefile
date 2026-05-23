@@ -21,13 +21,13 @@ deps: $(DEPS_DIR)/.installed
 
 $(DEPS_DIR)/.installed:
 	mkdir -p $(DEPS_DIR)
-	$(BATCH) --eval '(progn \
-	  (setq package-user-dir (expand-file-name "$(DEPS_DIR)")) \
-	  (setq package-archives (quote (("melpa" . "https://melpa.org/packages/") ("gnu" . "https://elpa.gnu.org/packages/")))) \
-	  (package-initialize) \
-	  (package-refresh-contents) \
-	  (package-install (quote restclient)) \
-	  (package-install (quote dash)))'
+	$(BATCH) \
+	  --eval '(setq package-user-dir (expand-file-name "$(DEPS_DIR)"))' \
+	  --eval '(setq package-archives (quote (("melpa" . "https://melpa.org/packages/") ("gnu" . "https://elpa.gnu.org/packages/"))))' \
+	  --eval '(package-initialize)' \
+	  --eval '(package-refresh-contents)' \
+	  --eval '(package-install (quote restclient))' \
+	  --eval '(package-install (quote dash))'
 	git clone --depth 1 https://github.com/Wilfred/propcheck.git $(PROPCHECK_DIR) 2>/dev/null || true
 	touch $(DEPS_DIR)/.installed
 
