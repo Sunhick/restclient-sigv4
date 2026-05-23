@@ -1,13 +1,14 @@
 # restclient-sigv4
 
-AWS Signature Version 4 (SigV4) signing for [restclient.el](https://github.com/pashky/restclient.el).
+AWS Signature Version 4 (SigV4) and Signature Version 4A (SigV4A) signing for [restclient.el](https://github.com/pashky/restclient.el).
 
-Sign requests to AWS services directly from your restclient buffers — no manual signature computation needed.
+Sign requests to AWS services directly from your restclient buffers — no manual signature computation needed. Supports both standard single-region SigV4 and asymmetric multi-region SigV4A signing.
 
 ## Requirements
 
 - Emacs 27.1+ (for `gnutls-hash-mac`)
 - [restclient.el](https://github.com/pashky/restclient.el)
+- OpenSSL 1.1+ in PATH (only required for SigV4A signing)
 
 ## Installation
 
@@ -46,13 +47,60 @@ The `X-Sigv4` header is consumed during signing and replaced with the proper AWS
 
 ### Directive Parameters
 
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `region`  | Yes*     | AWS region (e.g. `us-east-1`) |
-| `service` | Yes      | AWS service name (e.g. `execute-api`, `dynamodb`) |
-| `profile` | No       | AWS credentials profile name |
+| Parameter   | Required | Description |
+|-------------|----------|-------------|
+| `region`    | Yes*     | AWS region (e.g. `us-east-1`) or comma-separated region set for SigV4A |
+| `service`   | Yes      | AWS service name (e.g. `execute-api`, `dynamodb`) |
+| `profile`   | No       | AWS credentials profile name |
+| `algorithm` | No       | Signing algorithm: `sigv4` (default) or `sigv4a` |
 
 *Region can be omitted if `restclient-sigv4-default-region` is set.
+
+## SigV4A (Asymmetric) Signing
+
+SigV4A uses ECDSA with the P-256 curve instead of HMAC-SHA256, enabling signatures that are valid across multiple AWS regions. This is required for services like S3 Multi-Region Access Points and EventBridge global endpoints.
+
+### Basic SigV4A Usage
+
+Add `algorithm=sigv4a` to the directive:
+
+```
+#
+POST https://sts.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=sts algorithm=sigv4a
+Content-Type: application/x-www-form-urlencoded
+
+Action=GetCallerIdentity&Version=2011-06-15
+```
+
+### Multi-Region Signing
+
+Specify multiple regions as a comma-separated list:
+
+```
+#
+GET https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/
+X-Sigv4: region=us-east-1,us-west-2,eu-west-1 service=s3 algorithm=sigv4a
+```
+
+### Wildcard Region
+
+Use `*` to create a signature valid for any region:
+
+```
+#
+GET https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/
+X-Sigv4: region=* service=s3 algorithm=sigv4a
+```
+
+### SigV4A Requirements
+
+- OpenSSL 1.1+ must be in PATH (used for ECDSA key derivation and signing)
+- The `algorithm` parameter is case-insensitive (`sigv4a`, `SigV4A`, `SIGV4A` all work)
+- Region values must not contain whitespace
+- Multi-region and wildcard regions are only valid with `algorithm=sigv4a`
+
+SigV4A adds these headers to signed requests: `x-amz-region-set` (the region set value), plus the standard `Authorization`, `x-amz-date`, `x-amz-content-sha256`, and optionally `x-amz-security-token`.
 
 ## Minor Mode
 
@@ -143,13 +191,16 @@ All customizable variables are under the `restclient-sigv4` customization group 
 restclient-sigv4/
 ├── restclient-sigv4.el              ; Minor mode, hook, directive parser
 ├── restclient-sigv4-signer.el       ; SigV4 signing algorithm (lazy-loaded)
+├── restclient-sigv4a-signer.el      ; SigV4A ECDSA signing algorithm (lazy-loaded)
 ├── restclient-sigv4-credentials.el  ; Credential resolution (lazy-loaded)
 ├── restclient-sigv4-pkg.el          ; Package metadata
-├── examples.restclient              ; Example requests for various AWS services
+├── examples.restclient              ; Example requests (SigV4)
+├── examples-sigv4a.restclient       ; Example requests (SigV4A multi-region)
 ├── Makefile                         ; Build and test automation
 └── test/
     ├── restclient-sigv4-test.el     ; Unit tests (ERT)
-    └── restclient-sigv4-pbt.el      ; Property-based tests (propcheck)
+    ├── restclient-sigv4-pbt.el      ; Property-based tests (propcheck)
+    └── restclient-sigv4a-pbt.el     ; SigV4A property-based tests
 ```
 
 ## Development
@@ -165,6 +216,13 @@ make test
 
 # Property-based tests (requires propcheck)
 make pbt
+
+# SigV4A property-based tests
+make pbt-sigv4a
+
+# All tests (SigV4 + SigV4A)
+make test-all
+make pbt-all
 
 # Strict byte-compilation (warnings as errors)
 make lint
