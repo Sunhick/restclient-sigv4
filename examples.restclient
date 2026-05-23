@@ -1,0 +1,246 @@
+# -*- restclient -*-
+#
+# restclient-sigv4 examples
+#
+# Load the package (evaluate this block first with C-c C-c):
+:eval (progn (add-to-list 'load-path default-directory) (load "restclient-sigv4-credentials" nil t) (load "restclient-sigv4-signer" nil t) (load "restclient-sigv4" nil t))
+#
+# Set your credentials here (evaluated before requests).
+# Replace the placeholder values with your actual credentials.
+# These set environment variables that restclient-sigv4 reads.
+#
+:eval (setenv "AWS_ACCESS_KEY_ID" "YOUR_ACCESS_KEY_ID")
+:eval (setenv "AWS_SECRET_ACCESS_KEY" "YOUR_SECRET_ACCESS_KEY")
+:eval (setenv "AWS_SESSION_TOKEN" "YOUR_SESSION_TOKEN_IF_USING_TEMPORARY_CREDENTIALS")
+
+
+#
+# STS GetCallerIdentity - verify your credentials work
+# This is the simplest test — just tells you who you are.
+#
+POST https://sts.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=sts
+Content-Type: application/x-www-form-urlencoded
+
+Action=GetCallerIdentity&Version=2011-06-15
+
+#
+# List all S3 buckets
+#
+GET https://s3.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=s3
+
+#
+# List objects in a specific bucket (replace my-bucket with your bucket name)
+#
+GET https://s3.us-east-1.amazonaws.com/my-bucket?list-type=2&max-keys=10
+X-Sigv4: region=us-east-1 service=s3
+
+#
+# List S3 buckets using a named profile from ~/.aws/credentials
+# (remove the :eval blocks above if using file-based credentials)
+#
+GET https://s3.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=s3 profile=default
+
+#
+# DynamoDB ListTables
+#
+POST https://dynamodb.us-west-2.amazonaws.com/
+X-Sigv4: region=us-west-2 service=dynamodb
+Content-Type: application/x-amz-json-1.0
+X-Amz-Target: DynamoDB_20120810.ListTables
+
+{"Limit": 10}
+
+#
+# Lambda ListFunctions
+#
+GET https://lambda.us-east-1.amazonaws.com/2015-03-31/functions/
+X-Sigv4: region=us-east-1 service=lambda
+
+#
+# EC2 DescribeInstances (list your EC2 instances)
+#
+POST https://ec2.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=ec2
+Content-Type: application/x-www-form-urlencoded
+
+Action=DescribeInstances&Version=2016-11-15&MaxResults=10
+
+#
+# IAM ListUsers
+#
+POST https://iam.amazonaws.com/
+X-Sigv4: region=us-east-1 service=iam
+Content-Type: application/x-www-form-urlencoded
+
+Action=ListUsers&Version=2010-05-08&MaxItems=10
+
+#
+# SNS ListTopics
+#
+POST https://sns.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=sns
+Content-Type: application/x-www-form-urlencoded
+
+Action=ListTopics&Version=2010-03-31
+
+#
+# SQS ListQueues
+#
+POST https://sqs.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=sqs
+Content-Type: application/x-www-form-urlencoded
+
+Action=ListQueues&Version=2012-11-05
+
+#
+# CloudWatch ListMetrics
+#
+POST https://monitoring.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=monitoring
+Content-Type: application/x-www-form-urlencoded
+
+Action=ListMetrics&Version=2010-08-01&Namespace=AWS/EC2
+
+#
+# Secrets Manager ListSecrets
+#
+POST https://secretsmanager.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=secretsmanager
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: secretsmanager.ListSecrets
+
+{"MaxResults": 10}
+
+#
+# CloudFormation ListStacks
+#
+POST https://cloudformation.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=cloudformation
+Content-Type: application/x-www-form-urlencoded
+
+Action=ListStacks&Version=2010-05-15&StackStatusFilter.member.1=CREATE_COMPLETE
+
+#
+# ECS ListClusters
+#
+POST https://ecs.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=ecs
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AmazonEC2ContainerServiceV20141113.ListClusters
+
+{}
+
+#
+# API Gateway GetRestApis
+#
+GET https://apigateway.us-east-1.amazonaws.com/restapis
+X-Sigv4: region=us-east-1 service=apigateway
+
+#
+# KMS ListKeys
+#
+POST https://kms.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=kms
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: TrentService.ListKeys
+
+{"Limit": 10}
+
+#
+# Route53 ListHostedZones
+#
+GET https://route53.amazonaws.com/2013-04-01/hostedzone?maxitems=10
+X-Sigv4: region=us-east-1 service=route53
+
+#
+# CloudWatch Logs DescribeLogGroups
+#
+POST https://logs.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=logs
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: Logs_20140328.DescribeLogGroups
+
+{"limit": 10}
+
+#
+# SSM GetParametersByPath (list parameters under a path)
+#
+POST https://ssm.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=ssm
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AmazonSSM.GetParametersByPath
+
+{"Path": "/", "Recursive": false, "MaxResults": 10}
+
+#
+# EventBridge ListEventBuses
+#
+POST https://events.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=events
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AWSEvents.ListEventBuses
+
+{}
+
+#
+# Step Functions ListStateMachines
+#
+POST https://states.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=states
+Content-Type: application/x-amz-json-1.0
+X-Amz-Target: AWSStepFunctions.ListStateMachines
+
+{"maxResults": 10}
+
+#
+# ECR DescribeRepositories
+#
+POST https://api.ecr.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=ecr
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AmazonEC2ContainerRegistry_V20150921.DescribeRepositories
+
+{"maxResults": 10}
+
+#
+# Cognito ListUserPools
+#
+POST https://cognito-idp.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=cognito-idp
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AWSCognitoIdentityProviderService.ListUserPools
+
+{"MaxResults": 10}
+
+#
+# Athena ListWorkGroups
+#
+POST https://athena.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=athena
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AmazonAthena.ListWorkGroups
+
+{}
+
+#
+# Glue GetDatabases
+#
+POST https://glue.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=glue
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AWSGlue.GetDatabases
+
+{"MaxResults": 10}
+
+#
+# CodeBuild ListProjects
+#
+POST https://codebuild.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=codebuild
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: CodeBuild_20161006.ListProjects
+
+{"sortBy": "NAME", "sortOrder": "ASCENDING"}
