@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        emacs-version: ['27.1', '28.2', '29.4']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - name: Install OpenSSL
+        run: |
+          openssl version
+
+      - name: Install dependencies
+        run: make deps
+
+      - name: Byte-compile
+        run: make byte-compile
+
+      - name: Lint (strict byte-compile)
+        run: make lint
+
+      - name: Run unit tests
+        run: make test
+
+      - name: Run property-based tests
+        run: make pbt
+
+      - name: Run SigV4A property-based tests
+        run: make pbt-sigv4a

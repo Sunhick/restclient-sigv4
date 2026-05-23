@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Emacs
+        uses: purcell/setup-emacs@master
+        with:
+          version: '29.4'
+
+      - name: Install dependencies
+        run: make deps
+
+      - name: Byte-compile
+        run: make byte-compile
+
+      - name: Lint
+        run: make lint
+
+      - name: Run all tests
+        run: make test pbt pbt-sigv4a
+
+  publish:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build package archive
+        run: |
+          PKG_NAME="restclient-sigv4-${{ steps.version.outputs.version }}"
+          mkdir -p "dist/${PKG_NAME}"
+          cp restclient-sigv4.el \
+             restclient-sigv4-signer.el \
+             restclient-sigv4a-signer.el \
+             restclient-sigv4-credentials.el \
+             restclient-sigv4-pkg.el \
+             "dist/${PKG_NAME}/"
+          cd dist
+          tar cf "${PKG_NAME}.tar" "${PKG_NAME}"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/restclient-sigv4-${{ steps.version.outputs.version }}.tar
