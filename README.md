@@ -80,6 +80,31 @@ Profile selection priority:
 2. `AWS_PROFILE` environment variable
 3. `"default"`
 
+### Setting Credentials Inline with `:eval`
+
+You can set AWS credentials directly in your restclient buffer using `:eval` blocks. This is useful for temporary credentials (e.g., from `aws sts assume-role` or SSO sessions):
+
+```
+# Set credentials via environment variables (evaluated before requests)
+:eval (setenv "AWS_ACCESS_KEY_ID" "ASIAYYCLVGDKEXAMPLE")
+:eval (setenv "AWS_SECRET_ACCESS_KEY" "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+:eval (setenv "AWS_SESSION_TOKEN" "AQoDYXdzEJr...")
+
+#
+GET https://s3.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=s3
+```
+
+The `:eval` blocks run before the request is sent, so the credentials are available when signing occurs. You can also select a profile this way:
+
+```
+:eval (setenv "AWS_PROFILE" "production")
+
+#
+GET https://s3.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=s3
+```
+
 ### Credentials File Format
 
 Standard AWS INI format:
