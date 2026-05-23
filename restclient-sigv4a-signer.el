@@ -145,5 +145,191 @@ Algorithm:
     ;; Convert scalar to PEM EC private key
     (list :private-key-pem (restclient-sigv4a--scalar-to-pem found-scalar))))
 
+;;; ECDSA Signing
+
+(defun restclient-sigv4a--ecdsa-sign (private-key-pem message)
+  "Sign MESSAGE using ECDSA-P256-SHA256 with PRIVATE-KEY-PEM.
+Calls openssl dgst -sha256 -sign via subprocess.
+Returns DER-encoded signature as a unibyte string.
+Signals error if openssl is not available or signing fails."
+  (restclient-sigv4a--check-openssl)
+  (let ((keyfile (make-temp-file "sigv4a-sign-" nil ".pem"))
+        (stderr-file (make-temp-file "sigv4a-stderr-" nil ".txt")))
+    (unwind-protect
+        (progn
+          ;; Write PEM key to temp file with restrictive permissions
+          (set-file-modes keyfile #o600)
+          (with-temp-file keyfile
+            (insert private-key-pem))
+          ;; Sign the message via openssl subprocess
+          (with-temp-buffer
+            (set-buffer-multibyte nil)
+            (let* ((msg-bytes (encode-coding-string message 'utf-8))
+                   (exit-code
+                    (let ((coding-system-for-read 'binary)
+                          (coding-system-for-write 'binary))
+                      (insert msg-bytes)
+                      (call-process-region (point-min) (point-max)
+                                          "openssl"
+                                          t          ; delete input region
+                                          (list (current-buffer) stderr-file)
+                                          nil        ; don't redisplay
+                                          "dgst" "-sha256"
+                                          "-sign" keyfile
+                                          "-binary"))))
+              (if (= exit-code 0)
+                  (buffer-string)
+                ;; Read stderr for error details
+                (error "restclient-sigv4a: signer: ECDSA signing failed: %s"
+                       (with-temp-buffer
+                         (insert-file-contents stderr-file)
+                         (string-trim (buffer-string))))))))
+      ;; Clean up temp files
+      (when (file-exists-p keyfile)
+        (delete-file keyfile))
+      (when (file-exists-p stderr-file)
+        (delete-file stderr-file)))))
+
+;;; String-to-Sign and Authorization Header Assembly
+
+(defun restclient-sigv4a--credential-scope (datestamp service)
+  "Build SigV4A credential scope without region.
+DATESTAMP is the date string in YYYYMMDD format.
+SERVICE is the AWS service string.
+Returns string in format: <datestamp>/<service>/aws4_request."
+  (concat datestamp "/" service "/aws4_request"))
+
+(defun restclient-sigv4a--string-to-sign (timestamp datestamp service canonical-request-hash)
+  "Construct the SigV4A string-to-sign.
+TIMESTAMP is the request timestamp in YYYYMMDDTHHMMSSZ format.
+DATESTAMP is the date string in YYYYMMDD format.
+SERVICE is the AWS service string.
+CANONICAL-REQUEST-HASH is the hex-encoded SHA-256 hash of the serialized canonical request.
+Returns the string-to-sign with four newline-separated parts:
+  1. Algorithm identifier: AWS4-ECDSA-P256-SHA256
+  2. Timestamp: YYYYMMDDTHHMMSSZ
+  3. Credential scope: <datestamp>/<service>/aws4_request
+  4. Canonical request hash: hex(SHA256(canonical-request))"
+  (let ((scope (restclient-sigv4a--credential-scope datestamp service)))
+    (concat "AWS4-ECDSA-P256-SHA256" "\n"
+            timestamp "\n"
+            scope "\n"
+            canonical-request-hash)))
+
+(defun restclient-sigv4a--authorization-header (access-key-id datestamp service signed-headers der-signature)
+  "Assemble the SigV4A Authorization header value.
+ACCESS-KEY-ID is the AWS access key ID string.
+DATESTAMP is the date string in YYYYMMDD format.
+SERVICE is the AWS service string.
+SIGNED-HEADERS is the semicolon-separated list of signed header names.
+DER-SIGNATURE is the DER-encoded ECDSA signature as a unibyte string.
+Returns the full Authorization header value in the format:
+  AWS4-ECDSA-P256-SHA256 Credential=<id>/<scope>, SignedHeaders=<sh>, Signature=<hex>"
+  (let ((scope (restclient-sigv4a--credential-scope datestamp service))
+        (signature-hex (encode-hex-string der-signature)))
+    (concat "AWS4-ECDSA-P256-SHA256 "
+            "Credential=" access-key-id "/" scope ", "
+            "SignedHeaders=" signed-headers ", "
+            "Signature=" signature-hex)))
+
+;;; Public Signing Function
+
+(defun restclient-sigv4a-sign-request (method url headers body credential region-set service timestamp)
+  "Sign a request using SigV4A and return updated headers alist.
+METHOD: HTTP method string.
+URL: full request URL.
+HEADERS: alist of (name . value) pairs.
+BODY: request body string or nil.
+CREDENTIAL: plist (:access-key-id K :secret-access-key S :session-token T).
+REGION-SET: comma-separated region string or \"*\".
+SERVICE: AWS service string.
+TIMESTAMP: UTC time value or nil for current time.
+Returns updated headers alist with Authorization, x-amz-date,
+x-amz-content-sha256, x-amz-region-set, and optionally x-amz-security-token."
+  ;; Check openssl availability at entry
+  (restclient-sigv4a--check-openssl)
+  (let* ((access-key-id (plist-get credential :access-key-id))
+         (secret-access-key (plist-get credential :secret-access-key))
+         (session-token (plist-get credential :session-token))
+         ;; Derive EC key from credentials
+         (ec-key (restclient-sigv4a--derive-ec-key access-key-id secret-access-key))
+         (private-key-pem (plist-get ec-key :private-key-pem))
+         ;; Compute timestamps using existing utilities from restclient-sigv4-signer
+         (amz-date (restclient-sigv4--format-timestamp timestamp))
+         (datestamp (restclient-sigv4--format-datestamp timestamp))
+         ;; Compute body hash
+         (body-hash (restclient-sigv4-sha256 (or body "")))
+         ;; Parse URL
+         (url-parts (restclient-sigv4--parse-url url))
+         (host (plist-get url-parts :host))
+         (path (plist-get url-parts :path))
+         (query-params (plist-get url-parts :query-params))
+         ;; URI-encode the path (each segment individually, preserve trailing slash)
+         (canonical-path
+          (let* ((has-trailing-slash (and (> (length path) 1)
+                                         (string-suffix-p "/" path)))
+                 (segments (split-string path "/" t)))
+            (if segments
+                (let ((encoded (concat "/"
+                                       (mapconcat (lambda (seg)
+                                                    (restclient-sigv4-uri-encode seg t))
+                                                  segments
+                                                  "/"))))
+                  (if has-trailing-slash
+                      (concat encoded "/")
+                    encoded))
+              "/")))
+         ;; Build headers for signing
+         (signing-headers headers))
+    ;; Add host if not already present
+    (unless (cl-find "host" signing-headers
+                     :key #'car
+                     :test (lambda (a b) (string= (downcase a) (downcase b))))
+      (setq signing-headers
+            (cons (cons "host" host) signing-headers)))
+    ;; Add x-amz-content-sha256
+    (setq signing-headers
+          (cons (cons "x-amz-content-sha256" body-hash) signing-headers))
+    ;; Add x-amz-date
+    (setq signing-headers
+          (cons (cons "x-amz-date" amz-date) signing-headers))
+    ;; Add x-amz-region-set
+    (setq signing-headers
+          (cons (cons "x-amz-region-set" region-set) signing-headers))
+    ;; Conditionally add x-amz-security-token if session token present
+    (when session-token
+      (setq signing-headers
+            (cons (cons "x-amz-security-token" session-token) signing-headers)))
+    ;; Build canonical request using shared utility
+    (let* ((creq (restclient-sigv4-canonical-request
+                  method canonical-path query-params signing-headers body-hash))
+           ;; Serialize and hash canonical request
+           (creq-string (restclient-sigv4-serialize-canonical-request creq))
+           (creq-hash (restclient-sigv4-sha256 creq-string))
+           ;; Build string-to-sign (SigV4A variant: no region in scope)
+           (string-to-sign (restclient-sigv4a--string-to-sign
+                            amz-date datestamp service creq-hash))
+           ;; Sign with ECDSA
+           (der-signature (restclient-sigv4a--ecdsa-sign private-key-pem string-to-sign))
+           ;; Get signed headers from canonical request
+           (signed-headers (plist-get creq :signed-headers))
+           ;; Build Authorization header
+           (auth-header (restclient-sigv4a--authorization-header
+                         access-key-id datestamp service signed-headers der-signature)))
+      ;; Return updated headers alist with all required headers added
+      (let ((result headers))
+        ;; Add x-amz-date
+        (setq result (cons (cons "x-amz-date" amz-date) result))
+        ;; Add x-amz-content-sha256
+        (setq result (cons (cons "x-amz-content-sha256" body-hash) result))
+        ;; Add x-amz-region-set
+        (setq result (cons (cons "x-amz-region-set" region-set) result))
+        ;; Add x-amz-security-token if present
+        (when session-token
+          (setq result (cons (cons "x-amz-security-token" session-token) result)))
+        ;; Add Authorization header
+        (setq result (cons (cons "Authorization" auth-header) result))
+        result))))
+
 (provide 'restclient-sigv4a-signer)
 ;;; restclient-sigv4a-signer.el ends here
