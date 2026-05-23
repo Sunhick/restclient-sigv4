@@ -42,6 +42,7 @@
 
 ;; Defer loading signer and credentials until actually needed
 (autoload 'restclient-sigv4-sign-request "restclient-sigv4-signer")
+(autoload 'restclient-sigv4a-sign-request "restclient-sigv4a-signer")
 (autoload 'restclient-sigv4-resolve-credentials "restclient-sigv4-credentials")
 
 ;;; Customization
@@ -65,7 +66,7 @@
 
 ;;; Directive parsing
 
-(defconst restclient-sigv4--allowed-params '("region" "service" "profile")
+(defconst restclient-sigv4--allowed-params '("region" "service" "profile" "algorithm")
   "Allowed parameter keys for the :sigv4 directive.")
 
 (defun restclient-sigv4-parse-directive (value)
@@ -80,7 +81,7 @@ Signals error for invalid parameter keys or empty values."
       (let ((key (match-string 1 part))
             (val (match-string 2 part)))
         (unless (member key restclient-sigv4--allowed-params)
-          (error "restclient-sigv4: directive: invalid parameter '%s' (allowed: region, service, profile)" key))
+          (error "restclient-sigv4: directive: invalid parameter '%s' (allowed: region, service, profile, algorithm)" key))
         (when (string-empty-p val)
           (error "restclient-sigv4: directive: empty value for parameter '%s'" key))
         (setq result (plist-put result (intern (concat ":" key)) val))))
@@ -92,6 +93,35 @@ Signals error for invalid parameter keys or empty values."
   "URL of the current request being processed.
 Set by the advice around `restclient-http-do' so the hook function
 can access the request URL.")
+
+;;; Algorithm and region-set validation
+
+(defun restclient-sigv4--validate-algorithm (algorithm)
+  "Validate ALGORITHM value. Return normalized symbol: sigv4 or sigv4a.
+Signal error for unrecognized values."
+  (let ((normalized (downcase (or algorithm ""))))
+    (cond
+     ((string= normalized "sigv4a") 'sigv4a)
+     ((or (string= normalized "sigv4") (string= normalized "")) 'sigv4)
+     (t (error "restclient-sigv4: directive: unrecognized algorithm '%s' (accepted: sigv4, sigv4a)"
+               algorithm)))))
+
+(defun restclient-sigv4--validate-region-set (region algorithm-sym)
+  "Validate REGION for ALGORITHM-SYM.
+For sigv4a: region may be comma-separated list or `*', no whitespace allowed.
+For sigv4: region must not contain commas or `*'."
+  (cond
+   ((eq algorithm-sym 'sigv4a)
+    (when (or (null region) (string-empty-p region))
+      (error "restclient-sigv4: directive: region parameter is required for SigV4A signing"))
+    (when (string-match-p "[ \t\n\r]" region)
+      (error "restclient-sigv4: directive: region value is malformed (contains whitespace)"))
+    region)
+   ((eq algorithm-sym 'sigv4)
+    (when (or (string-match-p "," (or region ""))
+              (string= (or region "") "*"))
+      (error "restclient-sigv4: directive: multi-region is only supported with SigV4A (algorithm=sigv4a)"))
+    region)))
 
 ;;; Hook function
 
@@ -109,10 +139,14 @@ with the signed headers.  When absent, it does nothing."
             (assoc-delete-all "X-Sigv4" url-request-extra-headers))
       ;; Parse directive parameters
       (let* ((directive (restclient-sigv4-parse-directive (cdr sigv4-entry)))
+             (algorithm-str (plist-get directive :algorithm))
+             (algorithm-sym (restclient-sigv4--validate-algorithm algorithm-str))
              (region (or (plist-get directive :region)
                          restclient-sigv4-default-region))
              (service (plist-get directive :service))
              (profile (plist-get directive :profile)))
+        ;; Validate region-set for the chosen algorithm
+        (restclient-sigv4--validate-region-set region algorithm-sym)
         ;; Validate required parameters
         (unless region
           (error "restclient-sigv4: directive: missing required parameter 'region'"))
@@ -120,17 +154,27 @@ with the signed headers.  When absent, it does nothing."
           (error "restclient-sigv4: directive: missing required parameter 'service'"))
         ;; Resolve credentials
         (let ((credential (restclient-sigv4-resolve-credentials profile)))
-          ;; Sign the request and update headers
+          ;; Route to appropriate signer based on algorithm
           (setq url-request-extra-headers
-                (restclient-sigv4-sign-request
-                 url-request-method
-                 restclient-sigv4--current-url
-                 url-request-extra-headers
-                 url-request-data
-                 credential
-                 region
-                 service
-                 nil)))))))
+                (if (eq algorithm-sym 'sigv4a)
+                    (restclient-sigv4a-sign-request
+                     url-request-method
+                     restclient-sigv4--current-url
+                     url-request-extra-headers
+                     url-request-data
+                     credential
+                     region
+                     service
+                     nil)
+                  (restclient-sigv4-sign-request
+                   url-request-method
+                   restclient-sigv4--current-url
+                   url-request-extra-headers
+                   url-request-data
+                   credential
+                   region
+                   service
+                   nil))))))))
 
 ;;; Advice to capture URL before hook runs
 
