@@ -57,6 +57,48 @@ Both HEX-A and HEX-B must be lowercase hex strings of equal length."
   "AWS4-ECDSA-P256-SHA256"
   "Label string used in SigV4A key derivation fixed-input.")
 
+(defconst restclient-sigv4a--n-minus-two-hex
+  "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc63254f"
+  "P-256 curve order minus 2 (n - 2) in hex.
+Used for key derivation comparison per FIPS 186-4 Appendix B.4.2.")
+
+(defun restclient-sigv4a--derive-hmac-key (bit-len key label context)
+  "Derive key using NIST SP 800-108 KDF in Counter Mode with HMAC-SHA256.
+BIT-LEN is the desired output length in bits.
+KEY is the HMAC key (binary string).
+LABEL is the label byte string.
+CONTEXT is the context byte string.
+Returns a binary string of BIT-LEN/8 bytes.
+
+The fixed input is: label || 0x00 || context || int32(bitLen).
+The HMAC input for each iteration is: int32(i) || fixedInput."
+  (let* ((fixed-input (concat label
+                              (unibyte-string #x00)
+                              context
+                              ;; int32(bitLen) big-endian
+                              (unibyte-string (logand (ash bit-len -24) #xff)
+                                              (logand (ash bit-len -16) #xff)
+                                              (logand (ash bit-len -8) #xff)
+                                              (logand bit-len #xff))))
+         ;; For 256-bit output with SHA-256 (32 bytes), we need exactly 1 iteration
+         (counter-bytes (unibyte-string 0 0 0 1))
+         (hmac-input (concat counter-bytes fixed-input))
+         (output (restclient-sigv4-hmac-sha256 key hmac-input)))
+    (substring output 0 (/ bit-len 8))))
+
+(defun restclient-sigv4a--big-int-add-one-hex (hex-str)
+  "Add 1 to the big integer represented by HEX-STR.
+Returns the result as a hex string of the same length."
+  (let* ((bytes (decode-hex-string hex-str))
+         (carry 1)
+         (i (1- (length bytes))))
+    (while (and (>= i 0) (> carry 0))
+      (let ((sum (+ (aref bytes i) carry)))
+        (aset bytes i (logand sum #xff))
+        (setq carry (ash sum -8)))
+      (setq i (1- i)))
+    (encode-hex-string bytes)))
+
 (defun restclient-sigv4a--scalar-to-pem (scalar-hex)
   "Convert a raw P-256 scalar (as hex string) to PEM EC private key.
 Uses openssl to construct a valid EC private key from the raw scalar.
@@ -70,15 +112,8 @@ Returns the PEM string.  Signals error if openssl fails."
                ;;   OCTET STRING (32 bytes private key)
                ;;   [0] OID prime256v1 (1.2.840.10045.3.1.7)
                ;; }
-               ;; We use openssl ec to convert from a raw key format.
-               ;; First, build a minimal DER structure with the scalar and curve OID.
                (scalar-bytes (decode-hex-string scalar-hex))
                ;; ASN.1 DER encoding of EC private key (RFC 5915)
-               ;; 30 (SEQUENCE) + length
-               ;;   02 01 01 (INTEGER version=1)
-               ;;   04 20 <32-byte-scalar> (OCTET STRING)
-               ;;   a0 0a (context [0] explicit, length 10)
-               ;;     06 08 2a 86 48 ce 3d 03 01 07 (OID 1.2.840.10045.3.1.7 = prime256v1)
                (oid-bytes (decode-hex-string "06082a8648ce3d030107"))
                (version-bytes (decode-hex-string "020101"))
                (scalar-tlv (concat (unibyte-string #x04 (length scalar-bytes)) scalar-bytes))
@@ -109,35 +144,37 @@ Returns the PEM string.  Signals error if openssl fails."
 
 (defun restclient-sigv4a--derive-ec-key (access-key-id secret-access-key)
   "Derive ECDSA P-256 key pair from ACCESS-KEY-ID and SECRET-ACCESS-KEY.
-Uses counter-based HMAC-SHA256 loop per AWS SigV4A specification.
+Uses NIST SP 800-108 KDF in Counter Mode per AWS SigV4A specification,
+based on FIPS 186-4 Appendix B.4.2.
 Returns a plist (:private-key-pem PEM-STRING) or signals error.
 
 Algorithm:
-  1. key = \"AWS4A\" + secret-access-key
-  2. For counter = 1 to 254:
-     a. fixed-input = access-key-id + counter-byte + label
-     b. candidate = HMAC-SHA256(key, fixed-input)
-     c. If candidate < P-256 order (n) and candidate > 0: valid scalar found
-  3. Convert scalar to PEM-format EC private key via openssl subprocess
+  1. inputKey = \"AWS4A\" + secret-access-key
+  2. For external counter = 1 to 254:
+     a. context = access-key-id + external-counter-byte
+     b. candidate = KDF(inputKey, label=\"AWS4-ECDSA-P256-SHA256\", context, bitLen=256)
+     c. If candidate <= (n - 2): d = candidate + 1, valid scalar found
+  3. Convert scalar d to PEM-format EC private key via openssl subprocess
   4. Signal error if no valid scalar found in 254 attempts."
   (restclient-sigv4a--check-openssl)
-  (let* ((hmac-key (concat "AWS4A" secret-access-key))
+  (let* ((input-key (concat "AWS4A" secret-access-key))
          (label restclient-sigv4a--key-derivation-label)
-         (counter 1)
+         (ext-counter 1)
          (found-scalar nil))
-    ;; Loop counter from 1 to 254
-    (while (and (not found-scalar) (<= counter 254))
-      (let* ((fixed-input (concat access-key-id
-                                  (unibyte-string counter)
-                                  label))
-             (candidate-bin (restclient-sigv4-hmac-sha256 hmac-key fixed-input))
+    ;; Loop external counter from 1 to 254
+    (while (and (not found-scalar) (<= ext-counter 254))
+      (let* ((context (concat access-key-id (unibyte-string ext-counter)))
+             (candidate-bin (restclient-sigv4a--derive-hmac-key
+                             256 input-key label context))
              (candidate-hex (encode-hex-string candidate-bin)))
-        ;; Check: candidate > 0 and candidate < P-256 order
-        (when (and (not (restclient-sigv4a--hex-is-zero candidate-hex))
-                   (restclient-sigv4a--hex-less-than candidate-hex
-                                                     restclient-sigv4a--p256-order-hex))
-          (setq found-scalar candidate-hex)))
-      (setq counter (1+ counter)))
+        ;; Check: candidate <= (n - 2)
+        ;; i.e., candidate < (n - 2) OR candidate == (n - 2)
+        (when (or (restclient-sigv4a--hex-less-than candidate-hex
+                                                     restclient-sigv4a--n-minus-two-hex)
+                  (string= candidate-hex restclient-sigv4a--n-minus-two-hex))
+          ;; d = candidate + 1
+          (setq found-scalar (restclient-sigv4a--big-int-add-one-hex candidate-hex))))
+      (setq ext-counter (1+ ext-counter)))
     ;; If no valid scalar found, signal error
     (unless found-scalar
       (error "restclient-sigv4a: signer: key derivation failed for access key '%s' after 254 attempts"

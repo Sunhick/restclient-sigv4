@@ -1,0 +1,88 @@
+# -*- restclient -*-
+#
+# restclient-sigv4a examples — SigV4A (Asymmetric) signing
+#
+# SigV4A uses ECDSA (P-256) signing and supports multi-region requests.
+# Requires OpenSSL in PATH.
+#
+# Load the package (evaluate this block first with C-c C-c):
+:eval (progn (add-to-list 'load-path default-directory) (load "restclient-sigv4-credentials" nil t) (load "restclient-sigv4-signer" nil t) (load "restclient-sigv4a-signer" nil t) (load "restclient-sigv4" nil t))
+#
+# Set your credentials here (evaluated before requests).
+# Replace the placeholder values with your actual credentials.
+# These set environment variables that restclient-sigv4 reads.
+#
+:eval (setenv "AWS_ACCESS_KEY_ID" "YOUR_ACCESS_KEY_ID")
+:eval (setenv "AWS_SECRET_ACCESS_KEY" "YOUR_SECRET_ACCESS_KEY")
+:eval (setenv "AWS_SESSION_TOKEN" "YOUR_SESSION_TOKEN_IF_USING_TEMPORARY_CREDENTIALS")
+
+
+#
+# STS GetCallerIdentity — signed with SigV4A for a single region
+#
+POST https://sts.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=sts algorithm=sigv4a
+Content-Type: application/x-www-form-urlencoded
+
+Action=GetCallerIdentity&Version=2011-06-15
+
+#
+# S3 ListBuckets — single region with SigV4A
+#
+GET https://s3.us-west-2.amazonaws.com/
+X-Sigv4: region=us-west-2 service=s3 algorithm=sigv4a
+
+#
+# S3 Multi-Region Access Point — comma-separated region set
+# Replace MRAP_ALIAS with your Multi-Region Access Point alias
+#
+GET https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/
+X-Sigv4: region=us-east-1,us-west-2,eu-west-1 service=s3 algorithm=sigv4a
+
+#
+# S3 Multi-Region Access Point — list objects
+#
+GET https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/?list-type=2&max-keys=10
+X-Sigv4: region=us-east-1,us-west-2 service=s3 algorithm=sigv4a
+
+#
+# S3 Multi-Region Access Point — put object
+#
+PUT https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/test-object.txt
+X-Sigv4: region=us-east-1,us-west-2,eu-west-1 service=s3 algorithm=sigv4a
+Content-Type: text/plain
+
+Hello from SigV4A multi-region signing!
+
+#
+# S3 Multi-Region Access Point — wildcard region set
+# The `*` region set means the signature is valid for any region.
+#
+GET https://MRAP_ALIAS.accesspoint.s3-global.amazonaws.com/
+X-Sigv4: region=* service=s3 algorithm=sigv4a
+
+#
+# DynamoDB ListTables — single region with SigV4A
+#
+POST https://dynamodb.us-west-2.amazonaws.com/
+X-Sigv4: region=us-west-2 service=dynamodb algorithm=sigv4a
+Content-Type: application/x-amz-json-1.0
+X-Amz-Target: DynamoDB_20120810.ListTables
+
+{"Limit": 10}
+
+#
+# EventBridge PutEvents — multi-region global endpoint
+#
+POST https://events.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1,us-west-2 service=events algorithm=sigv4a
+Content-Type: application/x-amz-json-1.1
+X-Amz-Target: AWSEvents.PutEvents
+
+{"Entries": [{"Source": "my.app", "DetailType": "TestEvent", "Detail": "{\"key\": \"value\"}"}]}
+
+#
+# Using a named profile from ~/.aws/credentials
+#
+GET https://s3.us-east-1.amazonaws.com/
+X-Sigv4: region=us-east-1 service=s3 algorithm=sigv4a profile=default
